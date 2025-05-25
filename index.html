@@ -1,79 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Finger Controller</title>
-
-  <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
-
-  <!-- MediaPipe -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-
-  <!-- Style -->
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      font-family: 'Segoe UI', sans-serif;
-    }
-
-    body {
-      background: #0f2027;  /* fallback for old browsers */
-      background: linear-gradient(to right, #2c5364, #203a43, #0f2027);
-      color: white;
-      text-align: center;
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    h1 {
-      padding: 20px;
-      font-size: 2em;
-    }
-
-    #video, #canvas {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%) scaleX(-1);
-      border-radius: 15px;
-      box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
-    }
-
-    #fingerCount {
-      position: absolute;
-      bottom: 40px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      padding: 10px 20px;
-      border-radius: 10px;
-      font-size: 1.5em;
-      backdrop-filter: blur(10px);
-    }
-
-    canvas {
-      pointer-events: none;
-    }
-  </style>
+<meta charset="UTF-8" />
+<title>Hand Gesture Servo Control</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<style>
+  video, canvas { transform: scaleX(-1); } /* mirror */
+</style>
 </head>
 <body>
-  <h1>✋ Finger Controller Dashboard</h1>
+<h2>Hand Gesture Servo Control</h2>
+<video id="video" width="640" height="480" autoplay muted></video>
+<canvas id="canvas" width="640" height="480"></canvas>
 
-  <video id="video" width="640" height="480" autoplay muted></video>
-  <canvas id="canvas" width="640" height="480"></canvas>
-  <div id="fingerCount">Detecting...</div>
-
-  <script>
-    // Firebase setup
-  const firebaseConfig = {
+<script>
+  // Firebase config
+ const firebaseConfig = {
   apiKey: "AIzaSyCXVWHtb7hYH7E_ur26D3ZXXeNHAmlZ_7Y",
   authDomain: "first-15b8e.firebaseapp.com",
   databaseURL: "https://first-15b8e-default-rtdb.firebaseio.com",
@@ -84,56 +29,76 @@
   measurementId: "G-T07VXFWPCK"
 };
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+  // Initialize Firebase
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
 
-    // UI elements
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const fingerDisplay = document.getElementById('fingerCount');
+  // Setup video & canvas
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
 
-    // Start camera
-    navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
-      video.srcObject = stream;
-    });
+  // Access webcam
+  navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+    video.srcObject = stream;
+  });
 
-    function getFingerCount(landmarks) {
-      const tipIds = [4, 8, 12, 16, 20];
-      let count = 0;
-      for (let i = 1; i < tipIds.length; i++) {
-        if (landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y) count++;
+  // MediaPipe Hands setup
+  const hands = new Hands({locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  }});
+  hands.setOptions({
+    maxNumHands: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+  });
+
+  hands.onResults(onResults);
+
+  async function detectHands() {
+    await hands.send({image: video});
+    requestAnimationFrame(detectHands);
+  }
+
+  function onResults(results) {
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0];
+
+      // Draw landmarks
+      drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+      drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
+
+      // Calculate fingers up
+      const fingerTipsIds = [4, 8, 12, 16, 20];
+      let fingersUp = 0;
+      for(let i = 0; i < fingerTipsIds.length; i++){
+        let tip = landmarks[fingerTipsIds[i]];
+        let pip = landmarks[fingerTipsIds[i] - 2];
+        if(tip.y < pip.y) fingersUp++;
       }
-      // Thumb (horizontal check)
-      if (landmarks[4].x < landmarks[3].x) count++;
-      return count;
+
+      // Map fingers count to angle
+      const angleMap = {0:0,1:30,2:60,3:90,4:120,5:150};
+      const angle = angleMap[fingersUp] || 0;
+
+      // Update angle to Firebase
+      db.ref('/servo_angle').set(angle);
+
+      // Display text
+      ctx.font = "30px Arial";
+      ctx.fillStyle = "yellow";
+      ctx.fillText(`Fingers: ${fingersUp} Angle: ${angle}`, 10, 40);
     }
+    ctx.restore();
+  }
 
-    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-    hands.onResults(results => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (results.multiHandLandmarks.length > 0) {
-        const landmarks = results.multiHandLandmarks[0];
-        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
-        drawLandmarks(ctx, landmarks, { color: '#FF0000', lineWidth: 2 });
-
-        const count = getFingerCount(landmarks);
-        fingerDisplay.textContent = `✋ Fingers Detected: ${count}`;
-        db.ref('fingers').set(count);
-      } else {
-        fingerDisplay.textContent = "No hand detected 👀";
-        db.ref('fingers').set(0);
-      }
-    });
-
-    const camera = new Camera(video, {
-      onFrame: async () => { await hands.send({ image: video }); },
-      width: 640,
-      height: 480
-    });
-
-    camera.start();
-  </script>
+  video.onloadeddata = () => {
+    detectHands();
+  };
+</script>
 </body>
 </html>
